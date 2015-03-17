@@ -11,6 +11,7 @@
 
 #define MAXEVENTS 1
 #define MARGIN 5
+#define SENSITIVITY 200
 
 int last_value = -1;
 
@@ -29,41 +30,53 @@ static const char* edges[edge_len] = {
     [EDGE_RIGHT] = "Right",
     [EDGE_BOTTOM] = "Bottom"
 };
-
-struct device_t {
-    int min_x;
-    int min_y;
-    int max_x;
-    int max_y;
+typedef struct axis_t {
+    int min;
+    int max;
+    edge_t zero_edge;
+    edge_t full_edge;
+} axis_t;
+static struct device_t {
+    axis_t X;
+    axis_t Y;
     edge_t handling;
 } d;
 
-void printEvent(struct input_event * ev) {
-    printf("Key: %s %s %d\n", 
+static void
+printEvent(struct input_event * ev) {
+    printf("Key: %s %s %d\n",
             libevdev_event_type_get_name(ev->type),
             libevdev_event_code_get_name(ev->type, ev->code),
             ev->value);
 }
 
-int handleXEvent(int value) {
-    if (d.handling == EDGE_TOP || d.handling == EDGE_BOTTOM)
+static int
+handleAxis(axis_t* axis, int value) {
+    if (d.handling &&
+        (d.handling != axis->zero_edge || d.handling != axis->full_edge))
         return 1;
 
     if (!d.handling) {
-        if (value < d.min_x + MARGIN)
-            d.handling = EDGE_LEFT;
-        else if (value > d.max_x - MARGIN)
-            d.handling = EDGE_RIGHT;
+        if (value < axis->min + MARGIN)
+            d.handling = axis->zero_edge;
+        else if (value > axis->max - MARGIN)
+            d.handling = axis->full_edge;
     }
 
-    if (d.handling && abs(last_value - value) > 200) {
-        printf("X: %d\n", value);
-        last_value = value;
+    if (d.handling) {
+        int val = (d.handling == axis->zero_edge) ? value : (axis->max - value);
+        if (abs(last_value - val) > SENSITIVITY) {
+            last_value = val;
+            printf("X: %d\n", last_value);
+        }
+
     }
+
     return 0;
 }
 
-int handleEvent(struct input_event * ev) {
+static int
+handleEvent(struct input_event * ev) {
     if (ev->type == EV_KEY && ev->code == BTN_TOUCH) {
         if (ev->value == 0) {
             if (!d.handling) return 0;
@@ -75,11 +88,11 @@ int handleEvent(struct input_event * ev) {
     else if(ev->type == EV_ABS) {
         switch (ev->code) {
             case ABS_MT_POSITION_X:
-                handleXEvent(ev->value);
+                handleAxis(&d.X, ev->value);
                 break;
-            /*case ABS_MT_POSITION_Y:*/
-                /*handleYEvent(ev->value);*/
-                /*break;*/
+            case ABS_MT_POSITION_Y:
+                handleAxis(&d.Y, ev->value);
+                break;
             default:
                 break;
         }
@@ -109,10 +122,18 @@ int main(void) {
         err(1, "Can't open evdev device");
 
     // get device capabilites (min max X Y)
-    d.min_x = libevdev_get_abs_minimum(dev, ABS_MT_POSITION_X);
-    d.max_x = libevdev_get_abs_maximum(dev, ABS_MT_POSITION_X);
-    d.min_y = libevdev_get_abs_minimum(dev, ABS_MT_POSITION_Y);
-    d.max_y = libevdev_get_abs_maximum(dev, ABS_MT_POSITION_Y);
+    d.X = (struct axis_t){
+        .min = libevdev_get_abs_minimum(dev, ABS_MT_POSITION_X),
+        .max = libevdev_get_abs_maximum(dev, ABS_MT_POSITION_X),
+        .zero_edge = EDGE_LEFT,
+        .full_edge = EDGE_RIGHT
+    };
+    d.Y = (struct axis_t){
+        .min = libevdev_get_abs_minimum(dev, ABS_MT_POSITION_Y),
+        .max = libevdev_get_abs_maximum(dev, ABS_MT_POSITION_Y),
+        .zero_edge = EDGE_TOP,
+        .full_edge = EDGE_BOTTOM
+    };
 
     // create epoll instance
     epfd = epoll_create1(0);
