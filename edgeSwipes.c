@@ -10,6 +10,17 @@
 
 #define MAXEVENTS 1
 
+int handleEvent(struct input_event * ev) {
+    if (ev->type == EV_ABS && ev->code == ABS_MT_POSITION_X)
+        printf("Event: %s %s %d\n",
+                libevdev_event_type_get_name(ev->type),
+                libevdev_event_code_get_name(ev->type, ev->code),
+                ev->value
+              );
+
+    return 0;
+}
+
 int main(void) {
     // device
     struct libevdev *dev = NULL;
@@ -43,23 +54,16 @@ int main(void) {
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ep_ev) == -1)
         err(1, "epoll_ctl fail");
 
-    struct input_event ev;
-    int nfds, i;
-
     while (1) {
-        nfds = epoll_wait(epfd, ep_events, MAXEVENTS, -1);
+        int nfds = epoll_wait(epfd, ep_events, MAXEVENTS, -1);
         if (nfds == -1)
             err(1, "epoll_wait fail");
 
         do {
+            struct input_event ev;
             rc = libevdev_next_event(dev, LIBEVDEV_READ_FLAG_NORMAL, &ev);
             if (rc == 0) {
-                if (ev.type == EV_ABS && ev.code == ABS_MT_POSITION_X)
-                    printf("Event: %s %s %d\n",
-                            libevdev_event_type_get_name(ev.type),
-                            libevdev_event_code_get_name(ev.type, ev.code),
-                            ev.value
-                          );
+                handleEvent(&ev);
             }
 
         } while (rc == 1 || rc == 0 || rc == -EAGAIN);
@@ -67,3 +71,4 @@ int main(void) {
 
     return 0;
 }
+
