@@ -7,16 +7,83 @@
 #include <err.h>
 #include <errno.h>
 #include <sys/epoll.h>
+#include <math.h>
 
 #define MAXEVENTS 1
+#define MARGIN 5
+
+int last_value = -1;
+
+typedef enum {
+    EDGE_NONE,
+    EDGE_LEFT,
+    EDGE_TOP,
+    EDGE_RIGHT,
+    EDGE_BOTTOM,
+    edge_len
+} edge_t;
+static const char* edges[edge_len] = {
+    [EDGE_NONE] = "None",
+    [EDGE_LEFT] = "Left",
+    [EDGE_TOP] = "Top",
+    [EDGE_RIGHT] = "Right",
+    [EDGE_BOTTOM] = "Bottom"
+};
+
+struct device_t {
+    int min_x;
+    int min_y;
+    int max_x;
+    int max_y;
+    edge_t handling;
+} d;
+
+void printEvent(struct input_event * ev) {
+    printf("Key: %s %s %d\n", 
+            libevdev_event_type_get_name(ev->type),
+            libevdev_event_code_get_name(ev->type, ev->code),
+            ev->value);
+}
+
+int handleXEvent(int value) {
+    if (d.handling == EDGE_TOP || d.handling == EDGE_BOTTOM)
+        return 1;
+
+    if (!d.handling) {
+        if (value < d.min_x + MARGIN)
+            d.handling = EDGE_LEFT;
+        else if (value > d.max_x - MARGIN)
+            d.handling = EDGE_RIGHT;
+    }
+
+    if (d.handling && abs(last_value - value) > 200) {
+        printf("X: %d\n", value);
+        last_value = value;
+    }
+    return 0;
+}
 
 int handleEvent(struct input_event * ev) {
-    if (ev->type == EV_ABS && ev->code == ABS_MT_POSITION_X)
-        printf("Event: %s %s %d\n",
-                libevdev_event_type_get_name(ev->type),
-                libevdev_event_code_get_name(ev->type, ev->code),
-                ev->value
-              );
+    if (ev->type == EV_KEY && ev->code == BTN_TOUCH) {
+        if (ev->value == 0) {
+            if (!d.handling) return 0;
+
+            printf("%s\n", edges[d.handling]);
+            d.handling = EDGE_NONE;
+        }
+    }
+    else if(ev->type == EV_ABS) {
+        switch (ev->code) {
+            case ABS_MT_POSITION_X:
+                handleXEvent(ev->value);
+                break;
+            /*case ABS_MT_POSITION_Y:*/
+                /*handleYEvent(ev->value);*/
+                /*break;*/
+            default:
+                break;
+        }
+    }
 
     return 0;
 }
@@ -41,7 +108,11 @@ int main(void) {
     if (rc < 0)
         err(1, "Can't open evdev device");
 
-    printf("Input name: %s", libevdev_get_name(dev));
+    // get device capabilites (min max X Y)
+    d.min_x = libevdev_get_abs_minimum(dev, ABS_MT_POSITION_X);
+    d.max_x = libevdev_get_abs_maximum(dev, ABS_MT_POSITION_X);
+    d.min_y = libevdev_get_abs_minimum(dev, ABS_MT_POSITION_Y);
+    d.max_y = libevdev_get_abs_maximum(dev, ABS_MT_POSITION_Y);
 
     // create epoll instance
     epfd = epoll_create1(0);
@@ -66,7 +137,7 @@ int main(void) {
                 handleEvent(&ev);
             }
 
-        } while (rc == 1 || rc == 0 || rc == -EAGAIN);
+        } while (rc == 1 || rc == 0);
     }
 
     return 0;
