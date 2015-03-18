@@ -14,6 +14,7 @@
 #define SENSITIVITY 200
 
 int last_value = -1;
+int cur_value = -1;
 
 typedef enum {
     EDGE_NONE,
@@ -53,21 +54,26 @@ printEvent(struct input_event * ev) {
 static int
 handleAxis(axis_t* axis, int value) {
     if (d.handling &&
-        (d.handling != axis->zero_edge || d.handling != axis->full_edge))
+        (d.handling != axis->zero_edge && d.handling != axis->full_edge))
         return 1;
 
     if (!d.handling) {
-        if (value < axis->min + MARGIN)
+        if (value < axis->min + MARGIN) {
             d.handling = axis->zero_edge;
-        else if (value > axis->max - MARGIN)
+            printf("start: %s\n", edges[d.handling]);
+        }
+        else if (value > axis->max - MARGIN) {
             d.handling = axis->full_edge;
+            printf("start: %s\n", edges[d.handling]);
+        }
     }
 
     if (d.handling) {
         int val = (d.handling == axis->zero_edge) ? value : (axis->max - value);
-        if (abs(last_value - val) > SENSITIVITY) {
-            last_value = val;
-            printf("X: %d\n", last_value);
+        if (abs(cur_value - val) > SENSITIVITY) {
+            last_value = cur_value;
+            cur_value = val;
+            printf("%d\n", last_value);
         }
 
     }
@@ -122,6 +128,7 @@ int main(void) {
         err(1, "Can't open evdev device");
 
     // get device capabilites (min max X Y)
+    // and initialize axis'
     d.X = (struct axis_t){
         .min = libevdev_get_abs_minimum(dev, ABS_MT_POSITION_X),
         .max = libevdev_get_abs_maximum(dev, ABS_MT_POSITION_X),
