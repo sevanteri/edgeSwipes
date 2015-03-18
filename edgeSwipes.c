@@ -7,14 +7,13 @@
 #include <err.h>
 #include <errno.h>
 #include <sys/epoll.h>
+#include <sys/param.h>
 #include <math.h>
 
 #define MAXEVENTS 1
 #define MARGIN 5
-#define SENSITIVITY 200
-
-int last_value = -1;
-int cur_value = -1;
+#define SENSITIVITY 20
+#define EDGE_SENSITIVITY_PERCENT 0.05 // percent
 
 typedef enum {
     EDGE_NONE,
@@ -43,6 +42,10 @@ static struct device_t {
     edge_t handling;
 } d;
 
+int last_value = -1;
+int cur_value = -1;
+int edge_sensitivity = -1;
+
 static void
 printEvent(struct input_event * ev) {
     printf("Key: %s %s %d\n",
@@ -60,11 +63,15 @@ handleAxis(axis_t* axis, int value) {
     if (!d.handling) {
         if (value < axis->min + MARGIN) {
             d.handling = axis->zero_edge;
+#ifdef DEBUG
             printf("start: %s\n", edges[d.handling]);
+#endif
         }
         else if (value > axis->max - MARGIN) {
             d.handling = axis->full_edge;
+#ifdef DEBUG
             printf("start: %s\n", edges[d.handling]);
+#endif
         }
     }
 
@@ -73,7 +80,9 @@ handleAxis(axis_t* axis, int value) {
         if (abs(cur_value - val) > SENSITIVITY) {
             last_value = cur_value;
             cur_value = val;
-            printf("%d\n", last_value);
+#ifdef DEBUG
+            printf("cur: %d, last: %d\n", cur_value, last_value);
+#endif
         }
 
     }
@@ -82,14 +91,28 @@ handleAxis(axis_t* axis, int value) {
 }
 
 static int
-handleEvent(struct input_event * ev) {
-    if (ev->type == EV_KEY && ev->code == BTN_TOUCH) {
-        if (ev->value == 0) {
-            if (!d.handling) return 0;
+handleTouch(int value) {
+    if (value == 0) {
+        if (!d.handling) return 0;
 
+#ifdef DEBUG
+        printf("end: %s\n", edges[d.handling]);
+#endif
+        if (cur_value > edge_sensitivity && cur_value >= last_value) {
             printf("%s\n", edges[d.handling]);
             d.handling = EDGE_NONE;
         }
+        last_value = -1;
+        cur_value = -1;
+    }
+
+    return 0;
+}
+
+static int
+handleEvent(struct input_event * ev) {
+    if (ev->type == EV_KEY && ev->code == BTN_TOUCH) {
+        handleTouch(ev->value);
     }
     else if(ev->type == EV_ABS) {
         switch (ev->code) {
@@ -141,6 +164,15 @@ int main(void) {
         .zero_edge = EDGE_TOP,
         .full_edge = EDGE_BOTTOM
     };
+
+    edge_sensitivity = MIN(
+            d.X.max - d.X.min,
+            d.Y.max - d.Y.min
+    ) * EDGE_SENSITIVITY_PERCENT;
+
+#ifdef DEBUG
+    printf("edge sensitivity: %d\n", edge_sensitivity);
+#endif
 
     // create epoll instance
     epfd = epoll_create1(0);
