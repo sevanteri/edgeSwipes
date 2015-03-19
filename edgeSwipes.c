@@ -1,6 +1,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/epoll.h>
 #include <sys/param.h>
 #include <linux/input.h>
@@ -11,11 +12,13 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <libevdev.h>
+#include <libconfig.h>
 
 #define MAXEVENTS 1
 #define MARGIN 5
 #define SENSITIVITY 20
 #define EDGE_SENSITIVITY_PERCENT 0.05 // percent
+#define CONFIG_FILE "config.cfg"
 
 #ifdef DEBUG
 #define DPRINT(...) fprintf(stderr, __VA_ARGS__)
@@ -44,49 +47,56 @@ typedef struct axis_t {
     edge_t zero_edge;
     edge_t full_edge;
 } axis_t;
-static struct device_t {
+typedef struct device_t {
     axis_t X;
     axis_t Y;
     edge_t handling;
-} d;
 
-int last_value = -1;
-int cur_value = -1;
-int edge_sensitivity = -1;
+    int fd;
+    struct libevdev *dev;
 
-static void
-printEvent(struct input_event * ev)
-{
-    DPRINT("Key: %s %s %d\n",
-            libevdev_event_type_get_name(ev->type),
-            libevdev_event_code_get_name(ev->type, ev->code),
-            ev->value);
-}
+    int last_value;
+    int cur_value;
+    int edge_sensitivity;
+} device_t;
+
+/*
+ *static void
+ *printEvent(struct input_event * ev)
+ *{
+ *    DPRINT("Key: %s %s %d\n",
+ *            libevdev_event_type_get_name(ev->type),
+ *            libevdev_event_code_get_name(ev->type, ev->code),
+ *            ev->value);
+ *}
+ */
 
 static int
-handleAxis(axis_t* axis, int value)
+handleAxis(device_t *d, axis_t* axis, int value)
 {
-    if (d.handling &&
-        (d.handling != axis->zero_edge && d.handling != axis->full_edge))
+    if (d->handling &&
+        (d->handling != axis->zero_edge && d->handling != axis->full_edge))
         return 1;
 
-    if (!d.handling) {
+    if (!d->handling) {
         if (value < axis->min + MARGIN) {
-            d.handling = axis->zero_edge;
-            DPRINT("start: %s\n", edges[d.handling]);
+            d->handling = axis->zero_edge;
+            d->last_value = axis->min;
+            DPRINT("start: %s\n", edges[d->handling]);
         }
         else if (value > axis->max - MARGIN) {
-            d.handling = axis->full_edge;
-            DPRINT("start: %s\n", edges[d.handling]);
+            d->handling = axis->full_edge;
+            d->last_value = axis->max;
+            DPRINT("start: %s\n", edges[d->handling]);
         }
     }
 
-    if (d.handling) {
-        int val = (d.handling == axis->zero_edge) ? value : (axis->max - value);
-        if (abs(cur_value - val) > SENSITIVITY) {
-            last_value = cur_value;
-            cur_value = val;
-            DPRINT("cur: %d, last: %d\n", cur_value, last_value);
+    if (d->handling) {
+        int val = (d->handling == axis->zero_edge) ? value : (axis->max - value);
+        if (abs(d->cur_value - val) > SENSITIVITY) {
+            d->last_value = d->cur_value;
+            d->cur_value = val;
+            DPRINT("cur: %d, last: %d\n", d->cur_value, d->last_value);
         }
 
     }
@@ -95,36 +105,36 @@ handleAxis(axis_t* axis, int value)
 }
 
 static int
-handleTouch(int value)
+handleTouch(device_t *d, int value)
 {
     if (value == 0) {
-        if (!d.handling) return 0;
+        if (!d->handling) return 0;
 
-        DPRINT("end: %s\n", edges[d.handling]);
-        if (cur_value > edge_sensitivity && cur_value >= last_value) {
-            printf("%s\n", edges[d.handling]);
-            d.handling = EDGE_NONE;
+        DPRINT("end: %s\n", edges[d->handling]);
+        if (d->cur_value > d->edge_sensitivity && d->cur_value >= d->last_value) {
+            printf("%s\n", edges[d->handling]);
         }
-        last_value = -1;
-        cur_value = -1;
+        d->last_value = -1;
+        d->cur_value = -1;
+        d->handling = EDGE_NONE;
     }
 
     return 0;
 }
 
 static int
-handleEvent(struct input_event * ev)
+handleEvent(device_t *d, struct input_event * ev)
 {
     if (ev->type == EV_KEY && ev->code == BTN_TOUCH) {
-        handleTouch(ev->value);
+        handleTouch(d, ev->value);
     }
     else if(ev->type == EV_ABS) {
         switch (ev->code) {
         case ABS_MT_POSITION_X:
-            handleAxis(&d.X, ev->value);
+            handleAxis(d, &d->X, ev->value);
             break;
         case ABS_MT_POSITION_Y:
-            handleAxis(&d.Y, ev->value);
+            handleAxis(d, &d->Y, ev->value);
             break;
         default:
             break;
@@ -134,74 +144,209 @@ handleEvent(struct input_event * ev)
     return 0;
 }
 
+static int
+deviceFromPath(device_t *d, const char* path) {
+    int rc = 0;
+    d->fd = open(path, O_RDONLY|O_NONBLOCK);
+    if (d->fd == -1)
+        err(1, "Device not found");
+
+    rc = libevdev_new_from_fd(d->fd, &(d->dev));
+    if (rc < 0)
+        err(1, "Can't open evdev device");
+
+    DPRINT("Device name: %s\n", libevdev_get_name(d->dev));
+
+    if (!libevdev_has_event_type(d->dev, EV_ABS)) {
+        err(1, "Device doesn't seem to be a mouse/touchpad/touchscree");
+    }
+
+    return 0;
+}
+
+static int
+getDevice(device_t* d, char* path, const char* name, config_t* cfg) {
+
+    // check if path is set
+    // -> choose dev with path
+    if (strlen(path) > 0) {
+        deviceFromPath(d, path);
+
+        // get device capabilites (min max X Y)
+        // and initialize axis'
+        d->X = (struct axis_t){
+            .min = libevdev_get_abs_minimum(d->dev, ABS_MT_POSITION_X),
+            .max = libevdev_get_abs_maximum(d->dev, ABS_MT_POSITION_X),
+        };
+        d->Y = (struct axis_t){
+            .min = libevdev_get_abs_minimum(d->dev, ABS_MT_POSITION_Y),
+            .max = libevdev_get_abs_maximum(d->dev, ABS_MT_POSITION_Y),
+        };
+
+        goto finalize;
+    }
+
+    // check if name is set
+    // -> read config and try to find it from there
+    // -> check if device path in config
+    // -> if yes, use it, if not, loop through evdev devices and choose
+    if (name && cfg) {
+        DPRINT("Searching for '%s'\n", name);
+        config_setting_t *setting = config_lookup(cfg, name);
+        if (setting == NULL) {
+            fprintf(stderr, "Option not found\n");
+            exit(1);
+        }
+
+        char *opt_dev_path = malloc(strlen(name) + 12);
+        strcpy(opt_dev_path, name);
+        strcat(opt_dev_path, ".devicePath");
+
+        const char* dev_path = "";
+
+        config_lookup_string(cfg, opt_dev_path, &dev_path);
+
+        if (strlen(dev_path) <= 0) {
+            fprintf(stderr, "Device path not set\n");
+            return -1;
+        }
+
+        deviceFromPath(d, dev_path);
+        free(opt_dev_path);
+
+        int value = -1;
+        char *option = malloc(strlen(name) + 6);
+        int min, max;
+
+        strcpy(option, name);
+        strcat(option, ".min_x");
+        config_lookup_int(cfg, option, &value);
+        min = value;
+
+        strcpy(option, name);
+        strcat(option, ".max_x");
+        config_lookup_int(cfg, option, &value);
+        max = value;
+
+        d->X = (struct axis_t){
+            .min = (min != -1) ?
+                min :
+                libevdev_get_abs_minimum(d->dev, ABS_MT_POSITION_X),
+
+            .max = (max != -1) ?
+                max :
+                libevdev_get_abs_maximum(d->dev, ABS_MT_POSITION_X),
+        };
+
+        strcpy(option, name);
+        strcat(option, ".min_y");
+        config_lookup_int(cfg, option, &value);
+        min = value;
+
+        strcpy(option, name);
+        strcat(option, ".max_y");
+        config_lookup_int(cfg, option, &value);
+        max = value;
+
+        d->Y = (struct axis_t){
+            .min = (min != -1) ?
+                min :
+                libevdev_get_abs_minimum(d->dev, ABS_MT_POSITION_Y),
+
+            .max = (max != -1) ?
+                max :
+                libevdev_get_abs_maximum(d->dev, ABS_MT_POSITION_Y),
+        };
+
+        DPRINT("X.min: %d\nX.max: %d\nY.min: %d\nY.max: %d\n",
+                d->X.min, d->X.max, d->Y.min, d->Y.max
+                );
+
+        free(option);
+
+        goto finalize;
+    }
+
+
+
+finalize:
+    d->X.zero_edge = EDGE_LEFT;
+    d->X.full_edge = EDGE_RIGHT;
+    d->Y.zero_edge = EDGE_TOP;
+    d->Y.full_edge = EDGE_BOTTOM;
+
+    d->handling = EDGE_NONE;
+
+    d->cur_value = -1;
+    d->last_value = -1;
+
+    // same sensitivity for both axis
+    d->edge_sensitivity = MIN(
+            d->X.max - d->X.min,
+            d->Y.max - d->Y.min
+    ) * EDGE_SENSITIVITY_PERCENT;
+
+    DPRINT("edge sensitivity: %d\n", d->edge_sensitivity);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     // parse arguments
     int c;
-    /*FILE *config_file;*/
-    char* device_path = "/dev/input/by-id/usb-Tablet_ISD-V4-event-if01";
-    while ((c = getopt(argc, argv, "d:c:")) != -1) {
+    int config_read = 0;
+
+    config_t cfg;
+    config_init(&cfg);
+
+    /*char* device_path = "/dev/input/by-id/usb-Tablet_ISD-V4-event-if01";*/
+    char* device_path = "";
+    char* search_name = "default";
+
+    while ((c = getopt(argc, argv, "n:d:c:")) != -1) {
         switch (c) {
             case 'c':
-                /*config_file = fopen(optarg, O_RDONLY);*/
+                if (!config_read_file(&cfg, optarg)) {
+                    fprintf(stderr, "%s:%d - %s\n", config_error_file(&cfg),
+                            config_error_line(&cfg), config_error_text(&cfg));
+                    config_destroy(&cfg);
+                    exit(1);
+                }
+                DPRINT("Reading config file %s\n", optarg);
+                config_read = 1;
                 break;
             case 'd':
                 device_path = optarg;
                 break;
-            case '?':
-                if (optopt == 'c' || optopt == 'd')
-                    fprintf(stderr, "Option -%c requires an argument.\n", optopt);
-                else
-                    fprintf(stderr, "Unknown option character '\\x%x'\n", optopt);
-                return 1;
+            case 'n':
+                search_name = optarg;
+                break;
             default:
-                exit(1);
+                return 1;
         }
     }
 
+    if (!config_read) {
+        if (!config_read_file(&cfg, CONFIG_FILE)) {
+            fprintf(stderr, "%s:%d - %s\n", config_error_file(&cfg),
+                    config_error_line(&cfg), config_error_text(&cfg));
+            config_destroy(&cfg);
+            exit(1);
+        }
+        DPRINT("Reading config file %s\n", CONFIG_FILE);
+    }
+
     // device
-    struct libevdev *dev = NULL;
-    int fd;
-    int rc = 1;
+    device_t d;
+    if (getDevice(&d, device_path, search_name, &cfg) < 0) {
+        err(1, "Failed to initialize device\n");
+        return 1;
+    }
 
     // epoll
     int epfd;
     struct epoll_event ep_ev;
     struct epoll_event ep_events[MAXEVENTS];
-
-    // Open the input device. Hardcoded for now.
-    fd = open(device_path, O_RDONLY|O_NONBLOCK);
-    if (fd == -1)
-        err(1, "Device not found");
-
-    rc = libevdev_new_from_fd(fd, &dev);
-    if (rc < 0)
-        err(1, "Can't open evdev device");
-
-    DPRINT("Device name: %s\n", libevdev_get_name(dev));
-
-    // get device capabilites (min max X Y)
-    // and initialize axis'
-    d.X = (struct axis_t){
-        .min = libevdev_get_abs_minimum(dev, ABS_MT_POSITION_X),
-        .max = libevdev_get_abs_maximum(dev, ABS_MT_POSITION_X),
-        .zero_edge = EDGE_LEFT,
-        .full_edge = EDGE_RIGHT
-    };
-    d.Y = (struct axis_t){
-        .min = libevdev_get_abs_minimum(dev, ABS_MT_POSITION_Y),
-        .max = libevdev_get_abs_maximum(dev, ABS_MT_POSITION_Y),
-        .zero_edge = EDGE_TOP,
-        .full_edge = EDGE_BOTTOM
-    };
-
-    // same sensitivity for both axis
-    edge_sensitivity = MIN(
-            d.X.max - d.X.min,
-            d.Y.max - d.Y.min
-    ) * EDGE_SENSITIVITY_PERCENT;
-
-    DPRINT("edge sensitivity: %d\n", edge_sensitivity);
 
     // create epoll instance
     epfd = epoll_create1(0);
@@ -210,10 +355,11 @@ int main(int argc, char **argv)
 
     // tell epoll to listen on the device
     ep_ev.events = EPOLLIN;
-    ep_ev.data.fd = fd;
-    if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ep_ev) == -1)
+    ep_ev.data.fd = d.fd;
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, d.fd, &ep_ev) == -1)
         err(1, "epoll_ctl fail");
 
+    int rc = 1;
     while (1) {
         int nfds = epoll_wait(epfd, ep_events, MAXEVENTS, -1);
         if (nfds == -1)
@@ -221,9 +367,9 @@ int main(int argc, char **argv)
 
         do {
             struct input_event ev;
-            rc = libevdev_next_event(dev, LIBEVDEV_READ_FLAG_NORMAL, &ev);
+            rc = libevdev_next_event(d.dev, LIBEVDEV_READ_FLAG_NORMAL, &ev);
             if (rc == 0) {
-                handleEvent(&ev);
+                handleEvent(&d, &ev);
             }
 
         } while (rc == 1 || rc == 0);
