@@ -1,14 +1,16 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <linux/input.h>
-#include <fcntl.h>
-#include <libevdev.h>
-#include <err.h>
-#include <errno.h>
 #include <sys/epoll.h>
 #include <sys/param.h>
+#include <linux/input.h>
+#include <fcntl.h>
+#include <err.h>
+#include <errno.h>
 #include <math.h>
+#include <unistd.h>
+#include <getopt.h>
+#include <libevdev.h>
 
 #define MAXEVENTS 1
 #define MARGIN 5
@@ -46,16 +48,20 @@ int last_value = -1;
 int cur_value = -1;
 int edge_sensitivity = -1;
 
+#ifdef DEBUG
 static void
-printEvent(struct input_event * ev) {
+printEvent(struct input_event * ev)
+{
     printf("Key: %s %s %d\n",
             libevdev_event_type_get_name(ev->type),
             libevdev_event_code_get_name(ev->type, ev->code),
             ev->value);
 }
+#endif
 
 static int
-handleAxis(axis_t* axis, int value) {
+handleAxis(axis_t* axis, int value)
+{
     if (d.handling &&
         (d.handling != axis->zero_edge && d.handling != axis->full_edge))
         return 1;
@@ -91,7 +97,8 @@ handleAxis(axis_t* axis, int value) {
 }
 
 static int
-handleTouch(int value) {
+handleTouch(int value)
+{
     if (value == 0) {
         if (!d.handling) return 0;
 
@@ -110,27 +117,56 @@ handleTouch(int value) {
 }
 
 static int
-handleEvent(struct input_event * ev) {
+handleEvent(struct input_event * ev)
+{
     if (ev->type == EV_KEY && ev->code == BTN_TOUCH) {
         handleTouch(ev->value);
     }
     else if(ev->type == EV_ABS) {
         switch (ev->code) {
-            case ABS_MT_POSITION_X:
-                handleAxis(&d.X, ev->value);
-                break;
-            case ABS_MT_POSITION_Y:
-                handleAxis(&d.Y, ev->value);
-                break;
-            default:
-                break;
+        case ABS_MT_POSITION_X:
+            handleAxis(&d.X, ev->value);
+            break;
+        case ABS_MT_POSITION_Y:
+            handleAxis(&d.Y, ev->value);
+            break;
+        default:
+            break;
         }
     }
 
     return 0;
 }
 
-int main(void) {
+int main(int argc, char **argv)
+{
+    // parse arguments
+    int c;
+    while ((c = getopt(argc, argv, "abc:")) != -1) {
+        switch (c) {
+            case 'a':
+                printf("A\n");
+                break;
+            case 'b':
+                printf("B\n");
+                break;
+            case 'c':
+                printf("%s\n", optarg);
+                break;
+            case '?':
+                if (optopt == 'c')
+                    fprintf(stderr, "Option -%c requires an argument.\n", optopt);
+                /*else if (isprint(optopt))*/
+                    /*fprintf(stderr, "Unknown option -%c\n", optopt);*/
+                else
+                    fprintf(stderr, "Unknown option character '\\x%x'\n", optopt);
+                return 1;
+            default:
+                abort();
+        }
+    }
+    return 0;
+
     // device
     struct libevdev *dev = NULL;
     int fd;
@@ -165,6 +201,7 @@ int main(void) {
         .full_edge = EDGE_BOTTOM
     };
 
+    // same sensitivity for both axis
     edge_sensitivity = MIN(
             d.X.max - d.X.min,
             d.Y.max - d.Y.min
