@@ -17,7 +17,13 @@
 #define SENSITIVITY 20
 #define EDGE_SENSITIVITY_PERCENT 0.05 // percent
 
-typedef enum {
+#ifdef DEBUG
+#define DPRINT(...) fprintf(stderr, __VA_ARGS__)
+#else
+#define DPRINT(...) ((void) 0)
+#endif
+
+typedef enum edge_t {
     EDGE_NONE,
     EDGE_LEFT,
     EDGE_TOP,
@@ -48,16 +54,14 @@ int last_value = -1;
 int cur_value = -1;
 int edge_sensitivity = -1;
 
-#ifdef DEBUG
 static void
 printEvent(struct input_event * ev)
 {
-    printf("Key: %s %s %d\n",
+    DPRINT("Key: %s %s %d\n",
             libevdev_event_type_get_name(ev->type),
             libevdev_event_code_get_name(ev->type, ev->code),
             ev->value);
 }
-#endif
 
 static int
 handleAxis(axis_t* axis, int value)
@@ -69,15 +73,11 @@ handleAxis(axis_t* axis, int value)
     if (!d.handling) {
         if (value < axis->min + MARGIN) {
             d.handling = axis->zero_edge;
-#ifdef DEBUG
-            printf("start: %s\n", edges[d.handling]);
-#endif
+            DPRINT("start: %s\n", edges[d.handling]);
         }
         else if (value > axis->max - MARGIN) {
             d.handling = axis->full_edge;
-#ifdef DEBUG
-            printf("start: %s\n", edges[d.handling]);
-#endif
+            DPRINT("start: %s\n", edges[d.handling]);
         }
     }
 
@@ -86,9 +86,7 @@ handleAxis(axis_t* axis, int value)
         if (abs(cur_value - val) > SENSITIVITY) {
             last_value = cur_value;
             cur_value = val;
-#ifdef DEBUG
-            printf("cur: %d, last: %d\n", cur_value, last_value);
-#endif
+            DPRINT("cur: %d, last: %d\n", cur_value, last_value);
         }
 
     }
@@ -102,9 +100,7 @@ handleTouch(int value)
     if (value == 0) {
         if (!d.handling) return 0;
 
-#ifdef DEBUG
-        printf("end: %s\n", edges[d.handling]);
-#endif
+        DPRINT("end: %s\n", edges[d.handling]);
         if (cur_value > edge_sensitivity && cur_value >= last_value) {
             printf("%s\n", edges[d.handling]);
             d.handling = EDGE_NONE;
@@ -142,30 +138,26 @@ int main(int argc, char **argv)
 {
     // parse arguments
     int c;
-    while ((c = getopt(argc, argv, "abc:")) != -1) {
+    /*FILE *config_file;*/
+    char* device_path = "/dev/input/by-id/usb-Tablet_ISD-V4-event-if01";
+    while ((c = getopt(argc, argv, "d:c:")) != -1) {
         switch (c) {
-            case 'a':
-                printf("A\n");
-                break;
-            case 'b':
-                printf("B\n");
-                break;
             case 'c':
-                printf("%s\n", optarg);
+                /*config_file = fopen(optarg, O_RDONLY);*/
+                break;
+            case 'd':
+                device_path = optarg;
                 break;
             case '?':
-                if (optopt == 'c')
+                if (optopt == 'c' || optopt == 'd')
                     fprintf(stderr, "Option -%c requires an argument.\n", optopt);
-                /*else if (isprint(optopt))*/
-                    /*fprintf(stderr, "Unknown option -%c\n", optopt);*/
                 else
                     fprintf(stderr, "Unknown option character '\\x%x'\n", optopt);
                 return 1;
             default:
-                abort();
+                exit(1);
         }
     }
-    return 0;
 
     // device
     struct libevdev *dev = NULL;
@@ -178,13 +170,15 @@ int main(int argc, char **argv)
     struct epoll_event ep_events[MAXEVENTS];
 
     // Open the input device. Hardcoded for now.
-    fd = open("/dev/input/by-id/usb-Tablet_ISD-V4-event-if01", O_RDONLY|O_NONBLOCK);
+    fd = open(device_path, O_RDONLY|O_NONBLOCK);
     if (fd == -1)
         err(1, "Device not found");
 
     rc = libevdev_new_from_fd(fd, &dev);
     if (rc < 0)
         err(1, "Can't open evdev device");
+
+    DPRINT("Device name: %s\n", libevdev_get_name(dev));
 
     // get device capabilites (min max X Y)
     // and initialize axis'
@@ -207,9 +201,7 @@ int main(int argc, char **argv)
             d.Y.max - d.Y.min
     ) * EDGE_SENSITIVITY_PERCENT;
 
-#ifdef DEBUG
-    printf("edge sensitivity: %d\n", edge_sensitivity);
-#endif
+    DPRINT("edge sensitivity: %d\n", edge_sensitivity);
 
     // create epoll instance
     epfd = epoll_create1(0);
