@@ -172,18 +172,21 @@ getDevice(device_t* d, char* path, const char* name, config_t* cfg)
         free(opt_dev_path);
 
         int value = -1;
-        char *option = malloc(strlen(name) + 6);
+        char *option = malloc(strlen(name) + 7);
         int min, max;
 
+        // Read minimum and maximum values for both axis from the config file
         strcpy(option, name);
         strcat(option, ".min_x");
         config_lookup_int(cfg, option, &value);
         min = value;
+        value = -1;
 
         strcpy(option, name);
         strcat(option, ".max_x");
         config_lookup_int(cfg, option, &value);
         max = value;
+        value = -1;
 
         d->X = (struct axis_t){
             .min = (min != -1) ?
@@ -199,11 +202,13 @@ getDevice(device_t* d, char* path, const char* name, config_t* cfg)
         strcat(option, ".min_y");
         config_lookup_int(cfg, option, &value);
         min = value;
+        value = -1;
 
         strcpy(option, name);
         strcat(option, ".max_y");
         config_lookup_int(cfg, option, &value);
         max = value;
+        value = -1;
 
         d->Y = (struct axis_t){
             .min = (min != -1) ?
@@ -238,10 +243,9 @@ finalize:
     d->last_value = -1;
 
     // same sensitivity for both axis
-    d->edge_sensitivity = MIN(
-            d->X.max - d->X.min,
-            d->Y.max - d->Y.min
-    ) * EDGE_SENSITIVITY_PERCENT;
+    int xdiff = d->X.max - d->X.min;
+    int ydiff = d->Y.max - d->Y.min;
+    d->edge_sensitivity = MIN(xdiff, ydiff) * EDGE_SENSITIVITY_PERCENT;
 
     DPRINT("edge sensitivity: %d\n", d->edge_sensitivity);
     return 0;
@@ -302,7 +306,7 @@ int main(int argc, char **argv)
 
     // epoll
     int epfd;
-    struct epoll_event ep_ev;
+    struct epoll_event ep_ev = {0};
     struct epoll_event ep_events[MAXEVENTS];
 
     // create epoll instance
