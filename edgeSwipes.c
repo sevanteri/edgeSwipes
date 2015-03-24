@@ -11,8 +11,10 @@
 #include <math.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <time.h>
 
 #include "edgeSwipes.h"
+#include "timer.h"
 
 
 /*
@@ -47,7 +49,10 @@ handleAxis(device_t *d, axis_t* axis, int value)
     }
 
     if (d->handling) {
-        int val = (d->handling == axis->zero_edge) ? value : (axis->max - value);
+        int val = (d->handling == axis->zero_edge) ?
+            value :
+            (axis->max - value);
+
         if (abs(d->cur_value - val) > SENSITIVITY) {
             d->last_value = d->cur_value;
             d->cur_value = val;
@@ -62,11 +67,26 @@ handleAxis(device_t *d, axis_t* axis, int value)
 static int
 handleTouch(device_t *d, int value)
 {
-    if (value == 0) {
+    if (value == 1) {
+        clock_gettime(CLOCK_REALTIME, &(d->taptimer.start));
+    }
+    else if (value == 0) {
+        clock_gettime(CLOCK_REALTIME, &(d->taptimer.end));
+
+        int diff = d->taptimer.end.tv_nsec - d->taptimer.start.tv_nsec;
+        int sec = d->taptimer.end.tv_sec - d->taptimer.start.tv_sec;
+        if (sec < 1 && diff < TAPSENSITIVITY) {
+            DPRINT("TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
+            timer_run(&(d->taptimer));
+        } else {
+            DPRINT("NO TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
+        }
+
         if (!d->handling) return 0;
 
         DPRINT("end: %s\n", edges[d->handling]);
-        if (d->cur_value > d->edge_sensitivity && d->cur_value >= d->last_value) {
+        if (d->cur_value > d->edge_sensitivity &&
+                d->cur_value >= d->last_value) {
             printf("%s\n", edges[d->handling]);
         }
         d->last_value = -1;
@@ -118,6 +138,12 @@ deviceFromPath(device_t *d, const char* path)
     }
 
     return 0;
+}
+
+static void*
+printTapCount(void* arg) {
+    printf("tappetytap\n");
+    return NULL;
 }
 
 static int
@@ -248,6 +274,9 @@ finalize:
     d->edge_sensitivity = MIN(xdiff, ydiff) * EDGE_SENSITIVITY_PERCENT;
 
     DPRINT("edge sensitivity: %d\n", d->edge_sensitivity);
+
+    timer_init(&(d->taptimer), TAPSENSITIVITY, printTapCount);
+
     return 0;
 }
 

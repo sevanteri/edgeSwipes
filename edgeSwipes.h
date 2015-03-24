@@ -1,9 +1,11 @@
 #include <libevdev.h>
 #include <libconfig.h>
+#include "timer.h"
 
 #define MAXEVENTS 1
 #define MARGIN 5
 #define SENSITIVITY 20
+#define TAPSENSITIVITY 1E8 // 100 milli seconds
 #define EDGE_SENSITIVITY_PERCENT 0.05 // percent
 #define CONFIG_FILE "config.cfg"
 
@@ -35,6 +37,7 @@ typedef struct axis_t {
     edge_t zero_edge;
     edge_t full_edge;
 } axis_t;
+
 typedef struct device_t {
     axis_t X;
     axis_t Y;
@@ -46,6 +49,8 @@ typedef struct device_t {
     int last_value;
     int cur_value;
     int edge_sensitivity;
+
+    taptimer_t taptimer;
 } device_t;
 
 
