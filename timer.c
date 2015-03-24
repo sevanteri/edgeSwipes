@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <err.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #include "timer.h"
 
@@ -11,11 +12,11 @@ timer_init(struct taptimer_t* timer, int delay, voidfunc func )
 {
     pthread_attr_init(&(timer->thread_attr));
     pthread_attr_setdetachstate(&(timer->thread_attr), PTHREAD_CREATE_DETACHED);
-    /*pthread_attr_setstacksize(&(timer->thread_attr), 1600000);*/
 
     timer->delay = delay;
     timer->func = func;
     timer->thread_alive = 0;
+    timer->count = 0;
 
     return 0;
 }
@@ -26,16 +27,13 @@ func_wrapper(void* timer)
     struct taptimer_t *tim = (struct taptimer_t*)timer;
     tim->thread_alive = 1;
     const struct timespec del = {
-        tim->delay
+        .tv_sec = 0,
+        .tv_nsec = tim->delay
     };
     clock_nanosleep(CLOCK_REALTIME, 0, &del, NULL);
-    tim->func(NULL);
+    tim->func(timer);
     tim->thread_alive = 0;
 
-    pthread_exit(NULL);
-}
-
-void* simplefun() {
     pthread_exit(NULL);
 }
 
@@ -45,11 +43,13 @@ timer_run(struct taptimer_t* timer)
     if (timer->thread_alive)
         pthread_cancel(timer->thread);
 
-    int rc = pthread_create(&(timer->thread), &(timer->thread_attr),
-                        simplefun,
-                        NULL);
-    if (!rc) {
-
+    int rc = pthread_create(
+                            &(timer->thread),
+                            &(timer->thread_attr),
+                            func_wrapper,
+                            (void*)timer
+                        );
+    if (rc) {
         err(1, "Timer thread creation failed\n");
     }
 

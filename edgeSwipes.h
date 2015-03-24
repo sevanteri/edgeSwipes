@@ -5,7 +5,7 @@
 #define MAXEVENTS 1
 #define MARGIN 5
 #define SENSITIVITY 20
-#define TAPSENSITIVITY 1E8 // 100 milli seconds
+#define TAPSENSITIVITY 2E8 // 100 milli seconds
 #define EDGE_SENSITIVITY_PERCENT 0.05 // percent
 #define CONFIG_FILE "config.cfg"
 

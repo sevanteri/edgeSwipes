@@ -77,6 +77,7 @@ handleTouch(device_t *d, int value)
         int sec = d->taptimer.end.tv_sec - d->taptimer.start.tv_sec;
         if (sec < 1 && diff < TAPSENSITIVITY) {
             DPRINT("TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
+            d->taptimer.count += 1;
             timer_run(&(d->taptimer));
         } else {
             DPRINT("NO TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
@@ -142,7 +143,9 @@ deviceFromPath(device_t *d, const char* path)
 
 static void*
 printTapCount(void* arg) {
-    printf("tappetytap\n");
+    struct taptimer_t *timer = (struct taptimer_t*)arg;
+    printf("tap_%d\n", timer->count);
+    timer->count = 0;
     return NULL;
 }
 

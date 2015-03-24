@@ -6,15 +6,17 @@ LDLIBS = -lrt -levdev -lconfig -pthread
 
 OBJS = timer.c edgeSwipes.c
 
+stuff:
+	$(CC) $(CFLAGS) $(OBJS) $(LDLIBS) -o edgeSwipes
+
 .PHONY: all
 all: CFLAGS += -DDEBUG
 all: clean
-all:
-	$(CC) $(CFLAGS) $(OBJS) $(LDLIBS) -o edgeSwipes
+all: stuff
 
 .PHONY: final
 final: clean
-final: edgeSwipes
+final: stuff
 
 .PHONY: clean
 clean:
