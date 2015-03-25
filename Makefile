@@ -4,7 +4,7 @@ CFLAGS = -std=c11 -Wall -pedantic -I../libevdev/libevdev/\
 
 LDLIBS = -lrt -levdev -lconfig -pthread
 
-OBJS = timer.c edgeSwipes.c
+OBJS = tapper.c edgeSwipes.c
 
 stuff:
 	$(CC) $(CFLAGS) $(OBJS) $(LDLIBS) -o edgeSwipes

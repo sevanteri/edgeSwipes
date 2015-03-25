@@ -1,6 +1,6 @@
 #include <libevdev.h>
 #include <libconfig.h>
-#include "timer.h"
+#include "tapper.h"
 
 #define MAXEVENTS 1
 #define MARGIN 5
@@ -50,7 +50,7 @@ typedef struct device_t {
     int cur_value;
     int edge_sensitivity;
 
-    taptimer_t taptimer;
+    tapper_t tapper;
 } device_t;
 
 

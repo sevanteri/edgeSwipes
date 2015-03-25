@@ -1,12 +1,12 @@
-#ifndef TIMER_H
-#define TIMER_H
+#ifndef TAPPER_H
+#define TAPPER_H
 
 #include <time.h>
 #include <pthread.h>
 
 typedef void* (*voidfunc)(void* arg);
 
-typedef struct taptimer_t {
+typedef struct tapper_t {
     struct timespec start;
     struct timespec end;
     int count;
@@ -15,13 +15,13 @@ typedef struct taptimer_t {
     int thread_alive;
     int delay;
     voidfunc func;
-} taptimer_t;
+} tapper_t;
 
 
 int
-timer_init(struct taptimer_t* timer, int delay, voidfunc func );
+tapper_init(struct tapper_t* tapper, int delay, voidfunc func );
 
 int
-timer_run(struct taptimer_t*);
+tapper_run(struct tapper_t*);
 
 #endif

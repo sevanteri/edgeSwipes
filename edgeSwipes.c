@@ -14,7 +14,7 @@
 #include <time.h>
 
 #include "edgeSwipes.h"
-#include "timer.h"
+#include "tapper.h"
 
 
 /*
@@ -68,17 +68,16 @@ static int
 handleTouch(device_t *d, int value)
 {
     if (value == 1) {
-        clock_gettime(CLOCK_REALTIME, &(d->taptimer.start));
+        clock_gettime(CLOCK_REALTIME, &(d->tapper.start));
     }
     else if (value == 0) {
-        clock_gettime(CLOCK_REALTIME, &(d->taptimer.end));
+        clock_gettime(CLOCK_REALTIME, &(d->tapper.end));
 
-        int diff = d->taptimer.end.tv_nsec - d->taptimer.start.tv_nsec;
-        int sec = d->taptimer.end.tv_sec - d->taptimer.start.tv_sec;
+        int diff = d->tapper.end.tv_nsec - d->tapper.start.tv_nsec;
+        int sec = d->tapper.end.tv_sec - d->tapper.start.tv_sec;
         if (sec < 1 && diff < TAPSENSITIVITY) {
             DPRINT("TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
-            d->taptimer.count += 1;
-            timer_run(&(d->taptimer));
+            tapper_run(&(d->tapper));
         } else {
             DPRINT("NO TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
         }
@@ -143,9 +142,8 @@ deviceFromPath(device_t *d, const char* path)
 
 static void*
 printTapCount(void* arg) {
-    struct taptimer_t *timer = (struct taptimer_t*)arg;
-    printf("tap_%d\n", timer->count);
-    timer->count = 0;
+    struct tapper_t *tapper = (struct tapper_t*)arg;
+    printf("tap_%d\n", tapper->count);
     return NULL;
 }
 
@@ -278,7 +276,7 @@ finalize:
 
     DPRINT("edge sensitivity: %d\n", d->edge_sensitivity);
 
-    timer_init(&(d->taptimer), TAPSENSITIVITY, printTapCount);
+    tapper_init(&(d->tapper), TAPSENSITIVITY, printTapCount);
 
     return 0;
 }
