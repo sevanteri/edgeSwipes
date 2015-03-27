@@ -39,18 +39,20 @@ handleAxis(device_t *d, axis_t* axis, int value)
         if (value < axis->min + MARGIN) {
             d->handling = axis->zero_edge;
             d->last_value = axis->min;
+            d->cur_value = value - axis->min;
             DPRINT("start: %s\n", edges[d->handling]);
         }
         else if (value > axis->max - MARGIN) {
             d->handling = axis->full_edge;
             d->last_value = axis->max;
+            d->cur_value = (axis->max - value);
             DPRINT("start: %s\n", edges[d->handling]);
         }
     }
 
     if (d->handling) {
         int val = (d->handling == axis->zero_edge) ?
-            value :
+            (value - axis->min) :
             (axis->max - value);
 
         if (abs(d->cur_value - val) > SENSITIVITY) {
@@ -60,6 +62,7 @@ handleAxis(device_t *d, axis_t* axis, int value)
         }
 
     }
+    fflush(stdout);
 
     return 0;
 }
@@ -67,27 +70,34 @@ handleAxis(device_t *d, axis_t* axis, int value)
 static int
 handleTouch(device_t *d, int value)
 {
-    if (value == 1) {
+    if (value == 1 && !d->handling) {
         clock_gettime(CLOCK_REALTIME, &(d->tapper.start));
     }
     else if (value == 0) {
-        clock_gettime(CLOCK_REALTIME, &(d->tapper.end));
+        if (!d->handling) {
+            clock_gettime(CLOCK_REALTIME, &(d->tapper.end));
 
-        int diff = d->tapper.end.tv_nsec - d->tapper.start.tv_nsec;
-        int sec = d->tapper.end.tv_sec - d->tapper.start.tv_sec;
-        if (sec < 1 && diff < TAPSENSITIVITY) {
-            DPRINT("TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
-            tapper_run(&(d->tapper));
-        } else {
-            DPRINT("NO TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
+            int diff = d->tapper.end.tv_nsec - d->tapper.start.tv_nsec;
+            int sec = d->tapper.end.tv_sec - d->tapper.start.tv_sec;
+            if (sec < 1 && diff < TAPSENSITIVITY) {
+                DPRINT("TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
+                tapper_run(&(d->tapper));
+            } else {
+                DPRINT("NO TAP %d / %d, %f\n", diff, sec, TAPSENSITIVITY);
+            }
+
+            return 0;
         }
 
-        if (!d->handling) return 0;
 
-        DPRINT("end: %s\n", edges[d->handling]);
+        DPRINT("end: %s, cur: %d, last: %d\n",
+                edges[d->handling],
+                d->cur_value,
+                d->last_value);
         if (d->cur_value > d->edge_sensitivity &&
-                d->cur_value >= d->last_value) {
+                d->cur_value > d->last_value) {
             printf("%s\n", edges[d->handling]);
+            fflush(stdout);
         }
         d->last_value = -1;
         d->cur_value = -1;
@@ -143,7 +153,8 @@ deviceFromPath(device_t *d, const char* path)
 static void*
 printTapCount(void* arg) {
     struct tapper_t *tapper = (struct tapper_t*)arg;
-    printf("tap_%d\n", tapper->count);
+    printf("Tap_%d\n", tapper->count);
+    fflush(stdout);
     return NULL;
 }
 
@@ -354,7 +365,8 @@ int main(int argc, char **argv)
     while (1) {
         int nfds = epoll_wait(epfd, ep_events, MAXEVENTS, -1);
         if (nfds == -1)
-            err(1, "epoll_wait fail");
+            DPRINT("Restarting epoll_wait");
+            /*err(1, "epoll_wait fail");*/
 
         do {
             struct input_event ev;
